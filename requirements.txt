@@ -1,0 +1,31 @@
+# Dependencias diretas dos scripts, nas versoes em que foram testados.
+# Alternativa recomendada: conda env create -f environment.yml
+# (o PyPSA e o atlite arrastam dependencias geoespaciais que o conda
+# resolve com menos atrito do que o pip.)
+
+pypsa==1.2.4
+atlite==0.6.1
+pandas==3.0.3
+numpy==2.4.6
+matplotlib==3.11.0
+networkx==3.6.1
+scipy==1.17.1
+
+# Leitura do registo da REN (.xlsx)
+openpyxl==3.1.5
+
+# Mapa interativo gerado por n.explore()
+geopandas==1.1.4
+folium==0.20.0
+mapclassify==2.10.0
+
+# Cache do atlite e redes exportadas (.nc), e descarga dos dados ERA5
+netCDF4==1.7.4
+cdsapi==0.7.7
+
+# Solver por omissao, incluido com o PyPSA
+highspy==1.15.1
+
+# Solver comercial, usado apenas no diagnostico de inviabilidade do OPF
+# (topologia_OPF.py). Requer licenca propria, academica ou paga.
+# gurobipy==13.0.2

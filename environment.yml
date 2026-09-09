@@ -1,0 +1,26 @@
+name: rnt-pypsa
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pypsa
+  - atlite
+  - pandas
+  - matplotlib
+  - networkx
+  - scipy
+  - openpyxl
+  - geopandas
+  - folium
+  - mapclassify
+  - netcdf4
+  - cfgrib
+  - eccodes
+  - cdsapi
+
+# Solver comercial, usado apenas no diagnostico de inviabilidade do OPF
+# (topologia_OPF.py). Requer licenca propria, academica ou paga. Sem ele,
+# os scripts recorrem ao HiGHS, ja incluido no PyPSA.
+#  - gurobi
