@@ -42,7 +42,7 @@ topologia.py          Despacho real imposto + trânsito de potências não linea
 topologia_OPF.py      Despacho económico (OPF) + compensação iterativa de perdas
 contingencia_N1.py    Análise de contingência N-1 a linhas e transformadores
 
-rnt-qgis/                 Projeto QGIS onde a topologia foi georreferenciada
+rnt-qgis/             Projeto QGIS onde a topologia foi georreferenciada
 dados/                Ficheiros de entrada (ver abaixo)
 resultados/           Mapas, gráficos e tabelas gerados (criada automaticamente)
 cache/                Dados do ERA5 e redes em NetCDF (criada automaticamente)
