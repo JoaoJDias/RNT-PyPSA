@@ -17,8 +17,7 @@ Eletrotécnica e de Computadores.
 | Geradores | 596 |
 | Cargas | 88 |
 
-Níveis de tensão modelados: 150, 220 e 400 kV. A rede de distribuição (60 kV e
-inferior) fica fora do âmbito.
+Níveis de tensão modelados: 150, 220 e 400 kV.
 
 ## Fontes de dados
 
@@ -50,6 +49,13 @@ cache/                Dados do ERA5 e redes em NetCDF (criada automaticamente)
 
 Os três scripts de simulação chamam `rede_base.construir_rede(timestamp)` e
 recebem a rede pronta, evitando duplicar essa lógica.
+
+O `topologia_OPF.py` decide o despacho exclusivamente por minimização de
+custos marginais. Este critério não reproduz o despacho real do operador da
+rede, que depende de considerações operacionais não publicamente
+disponíveis, como restrições de transporte e gestão de reservas hídricas. Os
+resultados deste script devem ser lidos como um despacho de mérito económico
+puro, não como uma previsão do que a rede faria na realidade.
 
 ### Ficheiros de entrada (pasta `dados/`)
 
