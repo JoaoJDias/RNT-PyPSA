@@ -1,0 +1,24 @@
+# Cache do atlite e redes exportadas (ficheiros grandes, gerados pelo codigo)
+cache/
+*.nc
+
+# Resultados gerados pelos scripts
+resultados/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
