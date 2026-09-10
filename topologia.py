@@ -464,7 +464,7 @@ if CORRER_PF:
                 n, pesos_slack_todos, DISTRIBUIR_SLACK, verbose=(iteracao == 1)
             )
         except Exception as e:
-            print(f"\n❌ ERRO FATAL NO POWER FLOW (iteracao {iteracao}): {e}")
+            print(f"\nERRO FATAL NO POWER FLOW (iteracao {iteracao}): {e}")
             break
         finally:
             # Reposto sempre, mesmo em caso de erro, para o estado da
@@ -475,7 +475,7 @@ if CORRER_PF:
             n.generators["p_set"] = p_set_antes_do_pf
 
         if not convergiu:
-            print(f"\n❌ Power flow nao convergiu na iteracao {iteracao} - a parar redespacho.")
+            print(f"\nPower flow nao convergiu na iteracao {iteracao} - a parar redespacho.")
             break
 
         # Carregamento de linhas E transformadores: um transformador
@@ -520,7 +520,7 @@ if CORRER_PF:
           f"tecnologia mantem-se iguais aos valores reais do Excel)")
 
     if convergiu:
-        print(f"\n✅ Power flow (estado final) convergiu: {convergiu}")
+        print(f"\nPower flow (estado final) convergiu: {convergiu}")
 
         print("\nDespacho final por tecnologia (MW) - deve coincidir com o real:")
         print(n.generators.groupby("carrier")["p_set"].sum().round(1))
@@ -546,7 +546,7 @@ if CORRER_PF:
         n.export_to_netcdf(F_RESULTADO_PF)
         print(f"\nRede com resultados do power flow guardada em {F_RESULTADO_PF}")
     else:
-        print("\n❌ Nao foi possivel obter um resultado final valido do power flow.")
+        print("\nNao foi possivel obter um resultado final valido do power flow.")
 
 else:
     print("\n(Bloco de power flow desativado - muda CORRER_PF para True para ativar)")
@@ -565,11 +565,9 @@ else:
 # reimplementar essa logica a mao. Complementa, nao substitui, o mapa da
 # Seccao 2.
 #
-# NOTA: a assinatura exata de n.plot() (nomes dos parametros como
-# line_colors/line_cmap) pode variar ligeiramente consoante a versao do
-# PyPSA instalada - se algum parametro nao for reconhecido, confirma com
-# help(n.plot) no teu ambiente e ajusta o nome do parametro em causa; o
-# try/except abaixo garante que isto nunca interrompe o resto do script.
+# A assinatura de n.plot() (nomes de parametros como line_colors e
+# line_cmap) varia entre versoes do PyPSA. O try/except abaixo garante que
+# uma eventual incompatibilidade nao interrompe a execucao do script.
 if CORRER_PF and convergiu:
     print("\n" + "=" * 60)
     print("VISUALIZACAO NATIVA DO PYPSA")
@@ -593,10 +591,9 @@ if CORRER_PF and convergiu:
         # Producao real por (barramento, tecnologia) - so valores >0.01 MW,
         # para nao desenhar fatias residuais de tecnologias com 0 MW nesse
         # ponto (ex: geradores de importacao com p_set=0 neste cenario).
-        # NOTA: se uma tecnologia nao aparecer nenhuma no mapa, confirma
-        # aqui em baixo se e por ter producao ~0 em TODO o cenario (ex:
-        # solar as 19h45 de Janeiro - de noite, sem irradiancia - e um
-        # resultado correto, nao um erro de plotting).
+        # A ausencia de uma tecnologia no mapa corresponde a producao ~0
+        # em todo o cenario (por exemplo, solar as 19h45 de Janeiro, sem
+        # irradiancia), e nao a uma falha de representacao.
         eb_geracao = (
             n.generators_t.p.iloc[0]
             .groupby([n.generators.bus, n.generators.carrier])
@@ -615,10 +612,8 @@ if CORRER_PF and convergiu:
         # constante. Isto NUNCA altera as fatias/proporcoes (nem dentro
         # de um circulo, nem entre circulos diferentes): A/B = (A*k)/(B*k)
         # e sempre verdade, para qualquer k. So reduz o tamanho geral.
-        # AJUSTA AQUI SE PRECISO: os dados brutos (sem escala) mostraram
-        # um circulo a dominar todo o mapa - este valor reduz isso
-        # drasticamente; multiplica/divide por 2-3x se ainda precisares
-        # de afinar.
+        # Sem escala, o maior circulo domina o mapa por completo. Este
+        # valor foi ajustado empiricamente para uma leitura equilibrada.
         ESCALA_CIRCULOS = 0.00003
         eb_geracao_visual = eb_geracao * ESCALA_CIRCULOS
 
@@ -731,8 +726,8 @@ if CORRER_PF and convergiu:
         print(f"Mapa de congestionamento (n.plot) guardado em: {f_mapa_congestionamento}")
     except Exception as e:
         print(f"AVISO: nao foi possivel gerar o mapa nativo do PyPSA ({e}). "
-              f"Confirma a assinatura de n.plot() com help(n.plot) na tua "
-              f"versao instalada - o resto do script nao e afetado.")
+              f"A assinatura de n.plot() varia entre versoes do PyPSA. "
+              f"O resto do script nao e afetado.")
 
     # -- 12.1.1 Mapa interativo (n.explore) -------------------------------
     # Equivalente interativo do n.plot() (baseado em pydeck) - permite
@@ -803,8 +798,8 @@ if CORRER_PF and convergiu:
         print(f"Grafico do balanco energetico (n.statistics) guardado em: {f_balanco}")
     except Exception as e:
         print(f"AVISO: nao foi possivel gerar as estatisticas nativas do "
-              f"PyPSA ({e}). Confirma o modulo n.statistics na tua versao "
-              f"instalada - o resto do script nao e afetado.")
+              f"PyPSA ({e}). O modulo n.statistics varia entre versoes do "
+              f"PyPSA. O resto do script nao e afetado.")
 else:
     print("\n(Visualizacao nativa do PyPSA saltada - o power flow nao "
           "correu ou nao convergiu nesta execucao)")

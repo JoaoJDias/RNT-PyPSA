@@ -141,9 +141,9 @@ if not importadores.empty:
 print("\nDespacho forcado (real) aplicado ao modelo (MW):")
 print(n.generators.groupby("carrier")["p_set"].sum().round(1))
 
-# Confirma que o caso base (sem nenhuma contingencia) e viavel antes de
-# avancar para a analise N-1 - nao faz sentido testar contingencias sobre
-# um caso base que ja tem problemas por si so.
+# O caso base (sem nenhuma contingencia) e validado antes da analise
+# N-1: testar contingencias sobre um caso base ja inviavel nao produz
+# resultados interpretaveis.
 print("\nA validar o caso base (sem contingencias)...")
 convergiu_base, capados_base = resolver_pf_respeitando_capacidade(
     n, calcular_pesos_slack(n), DISTRIBUIR_SLACK, verbose=True

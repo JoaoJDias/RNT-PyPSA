@@ -204,7 +204,7 @@ def obter_preco_gas(data_alvo):
     if data_alvo not in precos_gas.index:
         raise ValueError(
             f"Data {data_alvo.date()} nao encontrada em {f_precos_gas} - "
-            f"confirma que o CSV cobre o ano do cenario escolhido."
+            f"o CSV tem de cobrir o ano do cenario escolhido."
         )
     linha = precos_gas.loc[data_alvo]
     return linha["preco_gas_eur_mwh"], linha["origem"], data_alvo
@@ -401,10 +401,10 @@ def diagnosticar_infeasibility(n, snapshot=None):
 
     if not problemas_encontrados:
         print("\nNenhuma causa obvia encontrada pelos diagnosticos manuais. "
-              "Sugestao: instala o gurobipy com licenca academica gratuita "
-              "(https://www.gurobi.com/academia/) para obteres o IIS exato, "
-              "ou reduz a rede (ex: menos geradores) ate isolares a "
-              "restricao problematica por tentativa e erro.")
+              "O gurobipy, com licenca academica gratuita "
+              "(https://www.gurobi.com/academia/), permite obter o IIS exato. "
+              "Em alternativa, reduzir a rede ate isolar a restricao "
+              "problematica.")
     print("-" * 60)
 
 
@@ -448,9 +448,8 @@ def resolver_com_fallback_gurobi(n):
                 pass
     except ImportError:
         print("gurobipy nao esta instalado - sem fallback disponivel. "
-              "Instala com 'pip install gurobipy' e ativa uma licenca "
-              "academica gratuita (https://www.gurobi.com/academia/) se "
-              "quiseres tentar este fallback.")
+              "Requer 'pip install gurobipy' e uma licenca, academica "
+              "gratuita ou paga (https://www.gurobi.com/academia/).")
 
     return status, condicao
 
@@ -876,10 +875,9 @@ else:
 # aqui aplicada ao despacho por OPF em vez do despacho real imposto -
 # permite comparar visualmente os dois metodos.
 #
-# NOTA: a assinatura exata de n.plot() pode variar ligeiramente consoante
-# a versao do PyPSA instalada - se algum parametro nao for reconhecido,
-# confirma com help(n.plot) e ajusta; o try/except garante que isto nunca
-# interrompe o resto do script.
+# A assinatura de n.plot() varia entre versoes do PyPSA. O try/except
+# abaixo garante que uma eventual incompatibilidade nao interrompe a
+# execucao do script.
 if CORRER_OPF and convergiu:
     print("\n" + "=" * 60)
     print("VISUALIZACAO NATIVA DO PYPSA")
@@ -905,10 +903,9 @@ if CORRER_OPF and convergiu:
         # Producao real por (barramento, tecnologia) - so valores >0.01 MW,
         # para nao desenhar fatias residuais de tecnologias com 0 MW nesse
         # ponto (ex: geradores de importacao com p_set=0 neste cenario).
-        # NOTA: se uma tecnologia nao aparecer nenhuma no mapa, confirma
-        # aqui em baixo se e por ter producao ~0 em TODO o cenario (ex:
-        # solar as 19h45 de Janeiro - de noite, sem irradiancia - e um
-        # resultado correto, nao um erro de plotting).
+        # A ausencia de uma tecnologia no mapa corresponde a producao ~0
+        # em todo o cenario (por exemplo, solar as 19h45 de Janeiro, sem
+        # irradiancia), e nao a uma falha de representacao.
         eb_geracao = (
             n.generators_t.p.iloc[0]
             .groupby([n.generators.bus, n.generators.carrier])
@@ -927,10 +924,8 @@ if CORRER_OPF and convergiu:
         # constante. Isto NUNCA altera as fatias/proporcoes (nem dentro
         # de um circulo, nem entre circulos diferentes): A/B = (A*k)/(B*k)
         # e sempre verdade, para qualquer k. So reduz o tamanho geral.
-        # AJUSTA AQUI SE PRECISO: os dados brutos (sem escala) mostraram
-        # um circulo a dominar todo o mapa - este valor reduz isso
-        # drasticamente; multiplica/divide por 2-3x se ainda precisares
-        # de afinar.
+        # Sem escala, o maior circulo domina o mapa por completo. Este
+        # valor foi ajustado empiricamente para uma leitura equilibrada.
         ESCALA_CIRCULOS = 0.00003
         eb_geracao_visual = eb_geracao * ESCALA_CIRCULOS
 
@@ -1043,8 +1038,8 @@ if CORRER_OPF and convergiu:
         print(f"Mapa de congestionamento (n.plot) guardado em: {f_mapa_congestionamento}")
     except Exception as e:
         print(f"AVISO: nao foi possivel gerar o mapa nativo do PyPSA ({e}). "
-              f"Confirma a assinatura de n.plot() com help(n.plot) na tua "
-              f"versao instalada - o resto do script nao e afetado.")
+              f"A assinatura de n.plot() varia entre versoes do PyPSA. "
+              f"O resto do script nao e afetado.")
 
     # -- 13.1.1 Mapa interativo (n.explore) -------------------------------
     # Equivalente interativo do n.plot() (baseado em pydeck) - permite
@@ -1111,8 +1106,8 @@ if CORRER_OPF and convergiu:
         print(f"Grafico do balanco energetico (n.statistics) guardado em: {f_balanco}")
     except Exception as e:
         print(f"AVISO: nao foi possivel gerar as estatisticas nativas do "
-              f"PyPSA ({e}). Confirma o modulo n.statistics na tua versao "
-              f"instalada - o resto do script nao e afetado.")
+              f"PyPSA ({e}). O modulo n.statistics varia entre versoes do "
+              f"PyPSA. O resto do script nao e afetado.")
 else:
     print("\n(Visualizacao nativa do PyPSA saltada - o OPF nao correu ou "
           "nao convergiu nesta execucao)")
