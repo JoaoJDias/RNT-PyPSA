@@ -93,8 +93,8 @@ Recomenda-se o conda: o PyPSA e o atlite dependem de bibliotecas
 geoespaciais que o conda resolve com menos atrito do que o pip.
 
 ```bash
-git clone https://github.com/<utilizador>/<repositorio>.git
-cd <repositorio>
+git clone https://github.com/JoaoJDias/RNT-PyPSA.git
+cd RNT-PyPSA
 conda env create -f environment.yml
 conda activate rnt-pypsa
 ```
