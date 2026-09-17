@@ -223,37 +223,6 @@ if CORRER_ATLITE:
 else:
     print("\n(Bloco atlite desativado - muda CORRER_ATLITE para True para ativar)")
 
-
-# ===========================================================================
-# NOTA METODOLOGICA: porque nao se usa OPF (n.optimize()) para o despacho
-# ===========================================================================
-# Foi inicialmente tentado um despacho por Otimizacao Linear (LOPF, via
-# n.optimize()), que decide o despacho economico "otimo" dado os custos
-# marginais assumidos por tecnologia (ver topologia_OPF.py).
-# No entanto, para
-# o cenario de Maximo de Inverno esse problema revelou-se INFEASIBLE:
-# mesmo havendo capacidade instalada total suficiente para cobrir a carga,
-# a rede nao tinha capacidade de transporte (s_nom) suficiente para escoar
-# o despacho que o solver escolheria livremente - um congestionamento real
-# nalgumas linhas da RNT, confirmado ao relaxar temporariamente os limites
-# das linhas (o problema passou a ter solucao otima).
-#
-# Em vez de adicionar mecanismos de corte de carga (load shedding) para
-# contornar essa infeasibilidade, optou-se por uma abordagem mais robusta
-# e mais fiel ao objetivo de validacao do modelo: IMPOR o despacho REAL
-# (registado pela REN no Excel, por tecnologia) a cada gerador, distribuido
-# proporcionalmente pela capacidade instalada de cada um, e correr apenas o
-# Power Flow nao linear (AC) sobre esse despacho conhecido. Isto elimina a
-# infeasibilidade por construcao (o despacho ja nao e uma decisao do
-# solver) e permite validar diretamente se a TOPOLOGIA e os PARAMETROS da
-# rede (linhas, transformadores, s_nom sazonais) sao capazes de escoar um
-# despacho que sabemos ter acontecido na realidade.
-#
-# A abordagem alternativa por OPF (com atlite, compensacao iterativa de
-# perdas e fallback Gurobi para diagnostico de infeasibility) esta mantida
-# em separado, no ficheiro topologia_OPF.py.
-
-
 # ===========================================================================
 # 4. DESPACHO IMPOSTO + TRANSITO DE POTENCIAS NAO LINEAR (AC)
 # ===========================================================================
@@ -327,13 +296,7 @@ if CORRER_PF:
     #      mais distantes (com folga disponivel ate ao seu p_nom).
     #   4. Repete ate nao restarem violacoes ou atingir o numero maximo
     #      de iteracoes.
-    #
-    # NOTA METODOLOGICA: este e um redespacho
-    # HEURISTICO, nao um redespacho otimo (que exigiria uma otimizacao
-    # completa tipo OPF com restricoes de seguranca - ver
-    # topologia_OPF.py para essa alternativa). Serve para obter um
-    # despacho fisicamente viavel e proximo do real, nao para encontrar
-    # a solucao economica ou tecnicamente "otima".
+   
     LIMIAR_VIOLACAO_PCT = 100.0
     RAIO_ZONA_ENVIO_HOPS = 2
     PASSO_REDESPACHO_MW = 20.0
@@ -438,28 +401,9 @@ if CORRER_PF:
     for iteracao in range(1, MAX_ITER_REDESPACHO + 1):
         # resolver_pf_respeitando_capacidade() fixa em p_nom o p_set de
         # qualquer gerador que o Slack distribuido empurre acima da sua
-        # capacidade. Essa alteracao e necessaria DURANTE a resolucao,
-        # mas nao deve sobreviver-lhe: sem esta copia, o p_set deixaria
-        # de representar o despacho imposto (mais o redespacho aplicado)
-        # e o total nacional da tecnologia em causa apareceria acima do
-        # valor do Excel no relatorio final. O mesmo cuidado ja e tido
-        # entre testes no contingencia_N1.py.
+        # capacidade. 
         p_set_antes_do_pf = n.generators["p_set"].copy()
         try:
-            # NOTA METODOLOGICA: por omissao
-            # (distribute_slack=False), o PyPSA atribui TODO o
-            # desequilibrio entre producao imposta e carga+perdas ao
-            # unico gerador Slack, que passa assim a absorver sozinho
-            # qualquer desvio do balanco energetico. O
-            # PyPSA suporta nativamente distribute_slack=True, que
-            # reparte esse desequilibrio por TODOS os geradores,
-            # proporcionalmente ao seu despacho - uma alternativa mais
-            # realista (aproxima a regulacao primaria de frequencia
-            # real, partilhada entre varias centrais, nao concentrada
-            # numa so) a comparar com o resultado por omissao. Os pesos
-            # personalizados (PESOS_SLACK) excluem eolica/solar da
-            # distribuicao, por nao participarem da regulacao primaria
-            # de frequencia real (sem inercia rotativa sincrona).
             convergiu, capados = resolver_pf_respeitando_capacidade(
                 n, pesos_slack_todos, DISTRIBUIR_SLACK, verbose=(iteracao == 1)
             )
@@ -467,11 +411,6 @@ if CORRER_PF:
             print(f"\nERRO FATAL NO POWER FLOW (iteracao {iteracao}): {e}")
             break
         finally:
-            # Reposto sempre, mesmo em caso de erro, para o estado da
-            # rede ficar coerente com o despacho imposto. Os resultados
-            # do trânsito de potências (n.generators_t.p, n.lines_t.p0,
-            # n.buses_t.v_mag_pu) ja estao calculados nesta altura e nao
-            # sao afetados por esta reposicao.
             n.generators["p_set"] = p_set_antes_do_pf
 
         if not convergiu:
@@ -528,10 +467,7 @@ if CORRER_PF:
         print("\nTensoes nos barramentos (p.u.) - resumo:")
         print(n.buses_t.v_mag_pu.T.describe().round(4))
 
-        # Relatorio final sobre os DOIS tipos de elemento, o mesmo
-        # universo ja usado na deteccao de violacoes do ciclo de
-        # redespacho acima - de outro modo, um transformador entre os
-        # mais carregados da rede nunca chegaria a ser reportado.
+        # Relatorio final sobre os DOIS tipos de elemento
         print("\nCarregamento de linhas e transformadores (% de s_nom) - top 10:")
         carregamento_final = pd.concat([
             (n.lines_t.p0.abs().iloc[0] / n.lines.s_nom * 100),
@@ -555,16 +491,6 @@ else:
 # ===========================================================================
 # 5. VISUALIZACAO NATIVA DO PYPSA (CONGESTIONAMENTO + ESTATISTICAS)
 # ===========================================================================
-# METODOLOGIA: em vez de depender so do mapa
-# desenhado manualmente (Seccao 2, matplotlib puro, sem recorrer a nenhuma
-# funcionalidade nativa do PyPSA), esta seccao usa explicitamente as
-# ferramentas de visualizacao INCLUIDAS no PyPSA - n.plot() (mapa) e o
-# modulo n.statistics (metricas/graficos) - que ja sabem posicionar a rede
-# a partir das coordenadas dos barramentos e mapear resultados
-# (carregamento, despacho) diretamente em cores/espessuras, sem
-# reimplementar essa logica a mao. Complementa, nao substitui, o mapa da
-# Seccao 2.
-#
 # A assinatura de n.plot() (nomes de parametros como line_colors e
 # line_cmap) varia entre versoes do PyPSA. O try/except abaixo garante que
 # uma eventual incompatibilidade nao interrompe a execucao do script.
@@ -607,13 +533,6 @@ if CORRER_PF and convergiu:
                 print(f"  (nota: '{c}' nao aparece no mapa - producao total "
                       f"neste cenario e ~0 MW: {total_c:.3f} MW)")
 
-        # Escala UNICA e simples, sem piso minimo nem qualquer condicao -
-        # so uma multiplicacao direta de todos os valores pela mesma
-        # constante. Isto NUNCA altera as fatias/proporcoes (nem dentro
-        # de um circulo, nem entre circulos diferentes): A/B = (A*k)/(B*k)
-        # e sempre verdade, para qualquer k. So reduz o tamanho geral.
-        # Sem escala, o maior circulo domina o mapa por completo. Este
-        # valor foi ajustado empiricamente para uma leitura equilibrada.
         ESCALA_CIRCULOS = 0.00003
         eb_geracao_visual = eb_geracao * ESCALA_CIRCULOS
 
@@ -671,16 +590,8 @@ if CORRER_PF and convergiu:
             line_colors=cores_linhas,  # cores ja resolvidas explicitamente (gradiente 0-100% + magenta >100%)
             title=f"Producao por tecnologia e carregamento das linhas - {TIMESTAMP_CENARIO.strftime('%d/%m/%Y %H:%M')}",
         )
-        # Sem geomap (sem projecao cartografica), o matplotlib nao sabe que
-        # x (longitude) e y (latitude) devem ter a mesma escala visual -
-        # sem isto, o mapa fica esticado e a forma de Portugal irreconhecivel.
+
         ax_mapa.set_aspect("equal")
-        # cmap com "cap" de cor propria para valores acima do vmax (100%) -
-        # usa a funcionalidade nativa "extend" do colorbar do matplotlib,
-        # que desenha um pequeno bloco/seta na cor indicada mesmo no topo
-        # da barra de cor, ligado visualmente a escala - assim fica
-        # imediatamente claro que o magenta e uma CONTINUACAO da mesma
-        # escala (valores >100%), nao so uma legenda separada e desligada.
         cmap_com_limite = plt.cm.RdYlGn_r.copy()
         cmap_com_limite.set_over(COR_SOBRECARGA)
 
@@ -736,17 +647,7 @@ if CORRER_PF and convergiu:
     # (nao precisa de servidor nem de internet para o abrir depois - so
     # o navegador). Util para exploracao interativa dos resultados,
     # complementando a figura estatica gerada na Seccao 5.
-    #
-    # Dados extra no popup (tooltip): por omissao, o n.explore() so
-    # mostra a cor/espessura, sem o VALOR - por isso adiciona-se
-    # explicitamente o carregamento (%) como atributo real de cada
-    # linha, e a producao por tecnologia (MW) como atributo de cada
-    # barramento, via line_columns/bus_columns (funcionalidade nativa do
-    # PyPSA para isto - ver User Guide, Maps (Interactive)).
-    # NOTA: o n.explore() nao desenha graficos circulares (pie charts)
-    # dentro do popup como o n.plot() desenha no mapa - por isso a
-    # "fatia" de cada tecnologia aparece aqui como VALOR EM MW (texto),
-    # nao como um desenho, mesma informacao mas noutro formato.
+    
     try:
         # Carregamento como atributo real da linha (para aparecer no popup)
         n.lines["carregamento_pct"] = carregamento_pct_mapa.round(1)
