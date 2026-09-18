@@ -32,40 +32,18 @@ TIMESTAMP_CENARIO_ALVO =  "2024-01-08 19:45:00"
 # ===========================================================================
 # 1. OPCOES DE SIMULACAO - configurar aqui antes de correr o script
 # ===========================================================================
-# CORRER_ATLITE: neste script, o atlite NAO tem qualquer papel no despacho
-# IMPOSTO inicial (esse vem sempre de valores reais, sem depender de
-# limites de capacidade renovavel). O seu unico papel aqui e servir de
-# LIMITE DE SEGURANCA ao redespacho heuristico (Seccao 4): ao tentar
-# aumentar geracao eolica/solar num gerador mais distante para aliviar uma
-# sobrecarga, o algoritmo usa p_max_pu (calculado aqui) para nunca
-# ultrapassar o que a meteorologia real desse instante permite - evita
-# despachar mais eolica/solar do que fisicamente possivel. Como o
-# redespacho nunca chegou a ser necessario nos cenarios ja testados, este
-# limite nunca foi de facto exercido na pratica, mas permanece ativo por
-# seguranca caso um cenario futuro o exija.
+# CORRER_ATLITE: calcula p_max_pu para os geradores eolicos e solares, a
+# partir dos dados meteorologicos do ERA5. Neste script, p_max_pu limita
+# apenas o redespacho heuristico (Seccao 4), nao o despacho inicial.
 CORRER_ATLITE = True
 
 # CORRER_PF: ativa o despacho imposto (Excel) + Power Flow AC (Seccao 4).
 CORRER_PF = True
 
-# DISTRIBUIR_SLACK: reparte o desequilibrio entre producao imposta e
-# carga+perdas por TODOS os geradores sincronos, proporcionalmente ao seu
-# despacho - em vez de o concentrar inteiramente no unico gerador Slack
-# (Central_Hidroeletrica_Gouvaes_HYD). Adotado como metodo principal (ver
-# nota completa junto a chamada n.pf()) por ser mais realista: aproxima a
-# regulacao primaria de frequencia real, repartida por varias centrais
-# sincronas, nao concentrada artificialmente numa so. Eolica e solar sao
-# EXCLUIDAS da distribuicao (peso 0) - na realidade nao participam da
-# regulacao primaria de frequencia (sem inercia rotativa sincrona), o
-# mesmo criterio ja usado para os candidatos a Slack dinamico no
-# contingencia_N1.py (CARRIERS_COM_INERCIA). A importacao e excluida
-# pela mesma razao, acrescida de uma segunda: os geradores de fronteira
-# representam uma troca ja fixada por p_min_pu = p_max_pu = 1 (Seccao 9.1
-# do rede_base.py), nao uma central nacional disponivel para compensar
-# desequilibrios. Sem esta exclusao, o Slack distribuido atribui-lhes
-# parte das perdas, empurra-os acima do proprio p_nom, e so a verificacao
-# de capacidade os traz de volta ao valor real, ao custo de um trânsito
-# de potencias adicional por execucao.
+# DISTRIBUIR_SLACK: reparte o desequilibrio entre producao e carga+perdas
+# por todos os geradores sincronos, proporcionalmente ao seu despacho, em
+# vez de o concentrar no unico gerador Slack. Eolica, solar e importacao
+# ficam excluidas da repartiacao, com peso zero.
 DISTRIBUIR_SLACK = True
 CARRIERS_EXCLUIDOS_DO_SLACK = ["wind", "solar", "import"]
 
@@ -233,7 +211,7 @@ if CORRER_PF:
     print("A APLICAR DESPACHO REAL (EXCEL) E EXECUTAR POWER FLOW AC")
     print("=" * 60)
 
-    # -- 12.1 Obter a producao real do Excel para a hora do cenario -----
+    # -- 4.1 Obter a producao real do Excel para a hora do cenario -----
     fossil_real = (
         _excel.loc[TIMESTAMP_CENARIO, "Gás Natural - Ciclo Combinado"]
         + _excel.loc[TIMESTAMP_CENARIO, "Gás natural - Cogeração"]
@@ -249,7 +227,7 @@ if CORRER_PF:
         "fossil": fossil_real
     }
 
-    # -- 12.2 Distribuir a producao pelos geradores no PyPSA ------------
+    # -- 4.2 Distribuir a producao pelos geradores no PyPSA ------------
     # O script pega no total de ex: Eolica e distribui por todos os parques
     # consoante a capacidade instalada (p_nom) de cada um.
     for carrier, valor_total_real in producao_real.items():
@@ -258,7 +236,7 @@ if CORRER_PF:
             pesos = gens.p_nom / gens.p_nom.sum()
             n.generators.loc[gens.index, "p_set"] = pesos * valor_total_real
 
-    # Garantir que a Importacao tambem assume o valor (p_nom ja foi dividido na Seccao 2.1 do rede_base.py)
+    # Garantir que a Importacao tambem assume o valor (p_nom ja foi dividido na Seccao 9.1 do rede_base.py)
     importadores = n.generators[n.generators.carrier == "import"].index
     if not importadores.empty:
         n.generators.loc[importadores, "p_set"] = n.generators.loc[importadores, "p_nom"]
@@ -266,36 +244,12 @@ if CORRER_PF:
     print("\nDespacho forcado (real) aplicado ao modelo (MW):")
     print(n.generators.groupby("carrier")["p_set"].sum().round(1))
 
-    # -- 12.3 Redespacho de seguranca + Power Flow Nao-Linear (AC) ------
-    # O despacho imposto (12.1-12.2) distribui a producao real de cada
-    # tecnologia PROPORCIONALMENTE pela capacidade instalada de cada
-    # gerador - uma simplificacao que ignora a localizacao geografica na
-    # rede. Isto pode gerar fluxos fisicamente implausiveis nalgumas
-    # linhas (confirmado: a Falagueira-Estremoz aparecia a >200% de
-    # carregamento mesmo com r/x/s_nom corretos e batendo certo com o
-    # Anexo B da REN - ver nota do email/reuniao com o orientador).
-    #
-    # A REN documenta explicitamente na Caracterizacao da RNT que gere
-    # este tipo de situacao atraves de "restricoes a geracao" - ou seja,
-    # reduz deliberadamente a producao de centrais especificas para
-    # aliviar corredores congestionados, compensando com mais producao
-    # da MESMA tecnologia noutros pontos da rede. O bloco abaixo imita
-    # esse comportamento de forma simplificada (heuristica), mantendo o
-    # total nacional por tecnologia EXATAMENTE igual ao valor do Excel -
-    # so a distribuicao espacial dentro de cada tecnologia e ajustada.
-    #
-    # Metodo (redespacho heuristico baseado em distancia na rede):
-    #   1. Corre o Power Flow AC e identifica a linha mais sobrecarregada
-    #      (> LIMIAR_VIOLACAO_PCT do s_nom).
-    #   2. Identifica de que lado da linha vem o fluxo em excesso (bus
-    #      "emissor").
-    #   3. Para cada tecnologia com geradores fisicamente proximos desse
-    #      bus emissor (dentro de RAIO_ZONA_ENVIO_HOPS "saltos" na rede),
-    #      reduz-lhes um pequeno passo de producao (PASSO_REDESPACHO_MW)
-    #      e atribui a mesma quantidade a geradores da MESMA tecnologia
-    #      mais distantes (com folga disponivel ate ao seu p_nom).
-    #   4. Repete ate nao restarem violacoes ou atingir o numero maximo
-    #      de iteracoes.
+    # -- 4.3 Redespacho de seguranca e transito de potencias AC --------
+    # Redespacho heuristico: corre o transito de potencias, identifica o
+    # elemento mais carregado acima de LIMIAR_VIOLACAO_PCT, reduz a producao
+    # dos geradores ate RAIO_ZONA_ENVIO_HOPS saltos do lado emissor e
+    # aumenta a mesma quantidade em geradores da mesma tecnologia mais
+    # distantes. Repete ate nao restarem violacoes ou esgotar as iteracoes.
    
     LIMIAR_VIOLACAO_PCT = 100.0
     RAIO_ZONA_ENVIO_HOPS = 2
@@ -334,7 +288,7 @@ if CORRER_PF:
         ajustou_algo = False
         for carrier in n.generators.carrier.unique():
             if carrier == "import":
-                continue  # importacao fica fixa (secao 6.1), nao e redespachavel
+                continue  # importacao fica fixa (Seccao 9.1 do rede_base.py), nao e redespachavel
 
             gens_carrier = n.generators[n.generators.carrier == carrier]
             if gens_carrier.empty:
@@ -477,7 +431,7 @@ if CORRER_PF:
 
         print(f"\nPerdas totais nas linhas (MW): {(n.lines_t.p0.iloc[0] + n.lines_t.p1.iloc[0]).sum():.2f}")
 
-        # -- 12.4 Guardar a rede com resultados do PF --------------------
+        # -- 4.4 Guardar a rede com resultados do transito de potencias --
         F_RESULTADO_PF = rf"{CACHE}rnt_portugal_{TIMESTAMP_CENARIO.strftime('%Y-%m-%d_%H%M')}_pf_resultado.nc"
         n.export_to_netcdf(F_RESULTADO_PF)
         print(f"\nRede com resultados do power flow guardada em {F_RESULTADO_PF}")
@@ -500,17 +454,10 @@ if CORRER_PF and convergiu:
     print("=" * 60)
 
     # -- 5.1 Mapa de congestionamento (n.plot) --------------------------
-    # Cor E espessura das linhas proporcionais ao carregamento (% de
-    # s_nom) - visualiza diretamente os pontos de congestionamento da
-    # rede. Os barramentos sao desenhados como GRAFICOS
-    # CIRCULARES (pie charts) com a reparticao da producao REAL por
-    # tecnologia nesse ponto (n.generators_t.p, nao o p_set imposto - ver
-    # nota metodologica da Seccao 4 sobre a diferenca entre os dois),
-    # aproveitando que n.plot() interpreta automaticamente um bus_sizes
-    # com indice duplo (barramento, carrier) desta forma - funcionalidade
-    # nativa do PyPSA (ver User Guide, Maps (Static) > Input data), em
-    # vez de continuarmos a desenhar todos os barramentos como pontos
-    # pretos uniformes.
+    # Cor e espessura das linhas proporcionais ao carregamento. Os
+    # barramentos sao desenhados como graficos circulares com a reparticao
+    # da producao por tecnologia, passando a n.plot() um bus_sizes com
+    # indice duplo (barramento, carrier).
     try:
         carregamento_pct_mapa = (n.lines_t.p0.abs().iloc[0] / n.lines.s_nom * 100)
 
@@ -640,7 +587,7 @@ if CORRER_PF and convergiu:
               f"A assinatura de n.plot() varia entre versoes do PyPSA. "
               f"O resto do script nao e afetado.")
 
-    # -- 12.1.1 Mapa interativo (n.explore) -------------------------------
+    # -- 5.2 Mapa interativo (n.explore) ----------------------------------
     # Equivalente interativo do n.plot() (baseado em pydeck) - permite
     # passar o rato sobre cada barramento/linha e ver os seus dados
     # diretamente no navegador. Exportado como ficheiro HTML autonomo
@@ -681,7 +628,7 @@ if CORRER_PF and convergiu:
               f"(pip install pydeck / conda install -c conda-forge pydeck). "
               f"O mapa estatico (n.plot) nao e afetado por este erro.")
 
-    # -- 12.2 Estatisticas nativas (n.statistics) ------------------------
+    # -- 5.3 Estatisticas nativas (n.statistics) ------------------------
     # Balanco energetico por tecnologia (Carrier), calculado pelo proprio
     # PyPSA (em vez do groupby manual usado nas seccoes anteriores) -
     # metodo mais citavel/reprodutivel, com grafico pronto a usar direto

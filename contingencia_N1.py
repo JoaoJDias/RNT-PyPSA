@@ -39,27 +39,16 @@ TIMESTAMP_CENARIO_ALVO = "2024-07-24 19:45:00"  # Maximo Verao
 # ===========================================================================
 # 1. OPCOES DE SIMULACAO - configurar aqui antes de correr o script
 # ===========================================================================
-# DISTRIBUIR_SLACK: reparte o desequilibrio entre despacho imposto e
-# carga+perdas por todos os geradores sincronos, em vez de o concentrar
-# inteiramente no Slack (original OU o reatribuido dinamicamente para uma
-# zona isolada). Eolica e solar excluidas (peso 0). NOTA: isto NAO
-# substitui a logica de reatribuicao dinamica de Slack ja existente
-# (continua a ser necessaria para garantir uma referencia valida por
-# sub-rede) - so muda como o desequilibrio de POTENCIA e repartido,
-# depois de essa referencia estar garantida. Ver nota completa na Seccao
-# 4 do topologia.py, onde foi validado primeiro.
+# DISTRIBUIR_SLACK: reparte o desequilibrio entre despacho e carga+perdas
+# por todos os geradores sincronos. Atua depois da reatribuicao dinamica
+# de Slack, que continua a garantir uma referencia valida por sub-rede.
 DISTRIBUIR_SLACK = True
-# A importacao e excluida pela mesma razao que a eolica e a solar, sem
-# inercia rotativa sincrona, acrescida de uma segunda: os geradores de
-# fronteira representam uma troca ja fixada por p_min_pu = p_max_pu = 1
-# (Seccao 9.1 do rede_base.py), nao uma central nacional disponivel para
-# compensar desequilibrios.
+# Eolica, solar e importacao ficam fora da repartiacao, com peso zero.
 CARRIERS_EXCLUIDOS_DO_SLACK = ["wind", "solar", "import"]
 
-# LIMIAR_VIOLACAO_PCT: percentagem da capacidade termica (s_nom) acima da
-# qual um elemento e considerado em sobrecarga. Definido aqui, no bloco de
-# opcoes, e nao junto ao ciclo N-1 (Seccao 3), porque e usado nos DOIS
-# sitios: na validacao do caso base (Seccao 2) e na classificacao de cada
+# LIMIAR_VIOLACAO_PCT: percentagem da capacidade termica acima da qual um
+# elemento e considerado em sobrecarga. Usado na validacao do caso base e
+# na classificacao de cada
 # contingencia (Seccao 4). Ter o valor num unico sitio garante que os dois
 # criterios nunca divergem.
 LIMIAR_VIOLACAO_PCT = 100.0
@@ -189,14 +178,9 @@ if SO_CASO_BASE:
 # ===========================================================================
 # 3. CONFIGURACAO DA ANALISE N-1 (LINHAS E TRANSFORMADORES)
 # ===========================================================================
-# METODOLOGIA: criterio de seguranca N-1, standard
-# na industria e adotado pela ENTSO-E/REN - a rede deve manter-se dentro
-# de limites operacionais seguros apos a perda de QUALQUER elemento
-# individual (linha OU transformador). Cada elemento e retirado UM DE
-# CADA VEZ (nunca mais que um em simultaneo), o Power Flow AC e
-# recalculado, os resultados sao registados, e o elemento e REPOSTO
-# antes do teste seguinte - os testes sao independentes entre si (nao
-# cumulativos).
+# Cada elemento e retirado um de cada vez, o transito de potencias e
+# recalculado, o resultado e registado, e o elemento e reposto antes do
+# teste seguinte. Os testes sao independentes entre si.
 #
 # O elemento e REMOVIDO de facto da rede (n.remove), nao so com a
 # impedancia inflada - isto e necessario para que o PyPSA reconheca
@@ -205,18 +189,10 @@ if SO_CASO_BASE:
 # atribuir dinamicamente um novo gerador Slack a essa zona, se ela ficar
 # sem o Slack original (ver SLACK DINAMICO abaixo).
 #
-# SLACK DINAMICO: no sistema eletrico real, se a central que fornece a
-# referencia de frequencia perder a ligacao a uma zona da rede, OUTRA
-# central sincrona de grande porte dessa zona assume esse papel
-# automaticamente (regulacao primaria de frequencia). O modelo, por
-# omissao, so tem 1 gerador Slack fixo em toda a rede - por isso, sempre
-# que uma contingencia isola uma zona sem o Slack original, o script
-# atribui-o dinamicamente ao MAIOR gerador sincrono (por capacidade
-# instalada, entre as tecnologias com inercia rotativa real: hidrica,
-# fossil, biomassa - NAO eolica/solar/importacao, que nao tem massa
-# girante sincrona) disponivel nessa zona, antes de correr o Power Flow.
-# So se a zona nao tiver NENHUM gerador sincrono disponivel e que fica
-# classificada como perda de alimentacao total.
+# Slack dinamico: quando uma contingencia isola uma zona sem o gerador
+# Slack original, o script atribui esse papel ao maior gerador das
+# tecnologias com inercia rotativa disponivel nessa zona. Sem nenhum
+# gerador sincrono, a zona e classificada como perda de alimentacao.
 #
 # Cada teste verifica quatro tipos de resultado possiveis, distintos:
 #   1. ILHA / PERDA DE ALIMENTACAO TOTAL - a zona isolada nao tem
@@ -241,25 +217,16 @@ CARRIERS_COM_INERCIA = ["hydro", "fossil", "biomass"]
 # engano ativo na iteracao seguinte, com 2 Slacks na mesma sub-rede,
 # o que impede o Power Flow de convergir).
 CONTROLS_ORIGINAIS = n.generators["control"].copy()
-# Guardado pela mesma razao que CONTROLS_ORIGINAIS: resolver_pf_respeitando_
-# capacidade() (rede_base.py) pode fixar o p_set de um gerador que exceda a
-# sua capacidade durante um teste. Sem repor este valor a cada iteracao,
-# essa alteracao persistiria para os testes seguintes, contaminando-os.
+# resolver_pf_respeitando_capacidade() pode fixar o p_set de um gerador
+# durante um teste. Este valor e reposto a cada iteracao.
 P_SET_ORIGINAL = n.generators["p_set"].copy()
 
 # ---------------------------------------------------------------------------
 # 3.1 Filtrar elementos radiais (excluidos do teste N-1)
 # ---------------------------------------------------------------------------
-# METODOLOGIA: um elemento e "radial" quando e a
-# UNICA ligacao de um barramento ao resto da rede - nesse caso, a sua
-# remocao isola SEMPRE esse barramento, por definicao topologica, sem
-# ser preciso correr o Power Flow para o saber (o resultado e trivial e
-# conhecido a priori). Na pratica de engenharia de redes, o criterio
-# N-1 aplica-se ao "backbone" malhado da rede de transporte - ramais
-# radiais para uma unica carga, central ou ponto de interligacao
-# internacional ficam tipicamente FORA do ambito da analise N-1, porque
-# a sua vulnerabilidade e conhecida e aceite a priori, nao uma
-# descoberta da analise.
+# Um elemento e radial quando e a unica ligacao de um barramento ao resto
+# da rede. A sua remocao isola sempre esse barramento, resultado conhecido
+# a priori, pelo que estes elementos sao excluidos do ciclo de testes.
 #
 # Deteta-se automaticamente: constroi-se o grafo completo da rede
 # (todas as linhas + todos os transformadores), calcula-se o grau de
@@ -267,12 +234,8 @@ P_SET_ORIGINAL = n.generators["p_set"].copy()
 # 1 tem, por definicao, uma UNICA linha/transformador a liga-lo - esse
 # elemento e classificado como radial e excluido da lista de teste.
 #
-# IMPORTANTE: usa-se MultiGraph (nao Graph simples) porque alguns pares
-# de barramentos tem LINHAS PARALELAS entre si (ex: dois circuitos
-# entre a mesma subestacao) - um grafo simples colapsaria essas duas
-# linhas numa unica aresta, fazendo esse barramento parecer ter grau 1
-# (radial) quando na realidade tem 2 ligacoes fisicas independentes
-# (redundancia real, nao radial).
+# MultiGraph, e nao Graph, para preservar as linhas paralelas entre o
+# mesmo par de barramentos, que um grafo simples colapsaria numa aresta.
 G_completo = nx.MultiGraph()
 G_completo.add_nodes_from(n.buses.index)
 G_completo.add_edges_from(zip(n.lines.bus0, n.lines.bus1))

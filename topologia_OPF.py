@@ -38,26 +38,21 @@ TIMESTAMP_CENARIO_ALVO =   "2024-01-08 19:45:00"
 # otimizacao (p_max_pu), nao so um limite de seguranca.
 CORRER_ATLITE = True
 
-# CORRER_OPF: ativa o despacho economico (OPF) com compensacao iterativa
-# de perdas (Seccao 5). Ver nota metodologica completa junto a essa
-# seccao, mais abaixo no ficheiro.
+# CORRER_OPF: ativa o despacho economico com compensacao iterativa de
+# perdas (Seccao 5).
 CORRER_OPF = True
 MAX_ITER_PERDAS = 10
 TOL_PERDAS_MW = 1.0  # criterio de convergencia das perdas, em MW
 
-# DISTRIBUIR_SLACK: reparte o desequilibrio entre despacho otimizado e
-# carga+perdas por todos os geradores sincronos (hidrica/fossil/biomassa),
-# proporcionalmente ao despacho - em vez de o concentrar inteiramente no
-# unico gerador Slack. Eolica e solar excluidas (peso 0), por nao
-# participarem da regulacao primaria de frequencia real. Ver nota
-# completa na Seccao 4 do topologia.py, onde foi validado primeiro.
+# DISTRIBUIR_SLACK: reparte o desequilibrio entre despacho e carga+perdas
+# por todos os geradores sincronos, proporcionalmente ao despacho. Eolica,
+# solar e importacao ficam excluidas, com peso zero.
 DISTRIBUIR_SLACK = True
 CARRIERS_EXCLUIDOS_DO_SLACK = ["wind", "solar", "import"]
 
-# CALIBRAR_CUSTO_FOSSIL: ativa a calibracao exploratoria de custos
-# marginais (Seccao 5.1), que procura o custo que aproxima o despacho do
-# OPF do despacho real. NAO substitui os custos da Seccao 3 nem se
-# destina a isso - ver nota metodologica completa junto a essa seccao.
+# CALIBRAR_CUSTO_FOSSIL: procura o custo marginal que mais aproxima o
+# despacho do OPF do despacho real (Seccao 5.1). Nao substitui os custos
+# definidos na Seccao 3.
 CALIBRAR_CUSTO_FOSSIL = False
 LIMIAR_APROXIMACAO_PCT = 10.0  # ver Fase 1 - abaixo disto, nao avanca para a Fase 2
 CUSTO_MIN_BISSECAO = 0.0
@@ -146,37 +141,15 @@ print("\nMapa da rede guardado em rede_rnt.png e rede_rnt.svg")
 # ---------------------------------------------------------------------------
 # 3. Custos marginais assumidos (ordem de merito)
 # ---------------------------------------------------------------------------
-# Custos marginais fixos por tecnologia, definindo a ordem de merito do
-# despacho economico. Nao sao precos de mercado calibrados por cenario:
-# o problema de otimizacao linear compara apenas custos RELATIVOS entre
-# tecnologias, pelo que uma escala unica aplicada a todas nao alteraria o
-# despacho resultante.
+# Custo marginal de cada tecnologia, que define a ordem de merito do
+# despacho economico. Eolica e solar a 0, hidrica a 10 e biomassa a 35
+# EUR/MWh. A importacao, fixada por p_min_pu = p_max_pu = 1, nao entra na
+# otimizacao. O custo da fossil e calculado por cenario:
 #
-#   Eolica e solar (0 EUR/MWh): sem custo de combustivel; o O&M variavel
-#     residual e ignorado por simplificacao.
-#   Hidrica (10 EUR/MWh): sem custo de combustivel, reflete o O&M variavel
-#     e o custo de oportunidade da agua armazenada.
-#   Biomassa (35 EUR/MWh): valor de referencia para co-combustao.
-#   Fossil (gas natural): custo marginal de curto prazo, calculado por
-#     cenario a partir do preco do gas, do preco do carbono, do fator de
-#     emissao e da eficiencia da central:
+#   SRMC = (preco_gas + fator_emissao * preco_carbono) / eficiencia + O&M
 #
-#       SRMC = (preco_gas + fator_emissao * preco_carbono) / eficiencia + O&M
-#
-#     - Preco do gas (EUR/MWh termico, diario): lido de
-#       dados/precos_gas_2024.csv. Usa o preco do ponto portugues (PT) e,
-#       nos dias sem liquidez suficiente para formar preco, o ponto
-#       espanhol (ES) como reserva, ja que os dois mercados estao
-#       acoplados atraves do VIP Iberico. A coluna "origem" do CSV indica
-#       qual foi usado em cada dia.
-#     - Preco do carbono EU-ETS (EUR/tCO2, mensal): definido em
-#       PRECO_CARBONO_MENSAL_2024, abaixo. O carbono varia muito mais
-#       devagar que o gas, pelo que a resolucao mensal e suficiente.
-#     - Fator de emissao, eficiencia e O&M: constantes definidas abaixo.
-#
-#   Importacao (100 EUR/MWh): irrelevante para o despacho, por estar
-#     fixada em p_min_pu = p_max_pu = 1, mantida acima das restantes
-#     apenas por convencao.
+# O preco do gas e lido de dados/precos_gas_2024.csv, com resolucao
+# diaria; o preco do carbono vem de PRECO_CARBONO_MENSAL_2024, abaixo.
 FATOR_EMISSAO_GAS = 0.202     # tCO2 / MWh termico
 EFICIENCIA_CCGT = 0.55        # eficiencia tipica de central de ciclo combinado
 OM_VARIAVEL_FOSSIL = 6.0      # EUR/MWh, O&M variavel de centrais a gas natural
@@ -462,26 +435,12 @@ def resolver_com_fallback_gurobi(n):
 # marginal assumido por tecnologia (Seccao 3) e a disponibilidade
 # renovavel calculada pelo atlite/ERA5 (Seccao 4, p_max_pu).
 #
-# O OPF linear (n.optimize) NAO modela perdas nas linhas (usa apenas a
-# reatancia x, ignora a resistencia r). Isto significa que o despacho
-# escolhido pode ficar ligeiramente aquem do necessario para cobrir carga
-# + perdas reais. Para corrigir isto, aplica-se uma COMPENSACAO ITERATIVA:
-#   1. Otimiza o despacho (OPF) para a carga atual.
-#   2. Fixa esse despacho e corre o Power Flow nao linear (AC) para medir
-#      as perdas REAIS nas linhas.
-#   3. Adiciona essas perdas a carga total (proporcionalmente aos
-#      barramentos existentes) e volta ao passo 1.
-#   4. Repete ate as perdas estabilizarem (variacao < TOL_PERDAS_MW entre
-#      iteracoes consecutivas) ou atingir o numero maximo de iteracoes.
-#
-# Se o OPF ficar infeasible nalguma iteracao (ver nota metodologica no
-# topologia.py "despacho real" - pode acontecer por congestionamento real
-# de alguma linha), corre-se o diagnostico automatico e tenta-se o Gurobi
-# como fallback (requer 'pip install gurobipy' e licenca, academica ou
-# paga - sem isso, o script para e reporta o diagnostico obtido).
-# Ver CORRER_OPF, MAX_ITER_PERDAS, TOL_PERDAS_MW, DISTRIBUIR_SLACK e
-# CARRIERS_EXCLUIDOS_DO_SLACK na seccao de OPCOES DE SIMULACAO, no topo
-# do ficheiro.
+# O OPF linear nao modela perdas, por ignorar a resistencia das linhas.
+# A compensacao iterativa corrige isso: otimiza o despacho, corre o
+# transito de potencias nao linear para medir as perdas reais, soma-as a
+# carga e repete, ate a variacao das perdas ficar abaixo de TOL_PERDAS_MW
+# ou esgotar MAX_ITER_PERDAS. Se o OPF ficar infeasible, corre o
+# diagnostico e tenta o Gurobi como alternativa.
 
 
 
@@ -537,9 +496,8 @@ def executar_ciclo_opf_perdas(n, p_set_cargas_base, max_iter=MAX_ITER_PERDAS,
             n, pesos_slack_todos, DISTRIBUIR_SLACK, verbose=verbose
         )
 
-        # IMPORTANTE: NaN, nao 0.0 - ver nota completa na versao original
-        # desta seccao. Um 0.0 aqui prende os geradores a zero na proxima
-        # chamada a n.optimize().
+        # NaN, e nao 0.0: um valor numerico aqui prenderia os geradores a
+        # esse valor na proxima chamada a n.optimize().
         n.generators["p_set"] = float("nan")
 
         if not convergiu:
@@ -578,24 +536,14 @@ def executar_ciclo_opf_perdas(n, p_set_cargas_base, max_iter=MAX_ITER_PERDAS,
 # outras restricoes que o modelo nao capta (nomeadamente restricoes de
 # transporte).
 #
-# NOTA METODOLOGICA IMPORTANTE: esta calibracao e
-# EXPLORATORIA, distinta da analise principal. Os custos que dai resultam
-# nao substituem os custos justificados pela literatura na Seccao 3 do
-# presente script -
-# um custo "calibrado" so tem sentido economico se cair dentro de uma gama
-# plausivel; se sair negativo, ou extremo, isso e evidencia CONTRA a
-# hipotese de que o preco explica a diferenca, nao a favor.
+# Os custos obtidos por esta calibracao nao substituem os definidos na
+# Seccao 3.
 #
-# FASE 1 (sempre executada primeiro): pesquisa binaria, so no custo do
-# fossil, assumindo que despacho_fossil(custo) e monotona decrescente -
-# quanto mais caro, menos fossil o OPF escolhe.
-# FASE 2 (so corre se a Fase 1 nao aproximar o suficiente): otimizacao em
-# 3 dimensoes (fossil, hidrica, biomassa) via scipy.optimize.minimize,
-# minimizando a soma dos erros absolutos face ao despacho real das tres
-# tecnologias em simultaneo. Eolica/solar mantidas a 0 (ja justificado);
-# importacao mantida a 100 (sem efeito no despacho, ja justificado).
-# Ver CALIBRAR_CUSTO_FOSSIL e as constantes associadas na seccao de
-# OPCOES DE SIMULACAO, no topo do ficheiro.
+# Fase 1: pesquisa binaria no custo do fossil, entre CUSTO_MIN_BISSECAO e
+# CUSTO_MAX_BISSECAO. Fase 2, executada apenas se a Fase 1 nao aproximar o
+# despacho real a menos de LIMIAR_APROXIMACAO_PCT: minimizacao da soma dos
+# erros absolutos em tres custos simultaneos (fossil, hidrica, biomassa),
+# por scipy.optimize.minimize.
 
 
 def obter_despacho_real_por_tecnologia(_excel, timestamp):
@@ -623,14 +571,9 @@ def calibrar_custo_fossil_bissecao(n, p_set_cargas_base, fossil_real):
     print("-" * 60)
     print(f"Despacho real do fossil, alvo desta calibracao: {fossil_real:.1f} MW")
 
-    # Custo SRMC deste cenario, calculado pela equacao (41) e guardado
-    # antes de a pesquisa comecar a sobrepo-lo. Cada tentativa escreve o
-    # seu proprio valor em marginal_cost, e sem reposicao o custo do
-    # fossil ficaria, no fim desta fase, no ultimo valor testado - que a
-    # Fase 2 leria depois como ponto de partida, em vez do valor
-    # justificado pela literatura. E reposto antes de qualquer return
-    # desta funcao; o
-    # custo escolhido pela calibracao e aplicado a rede pelo chamador.
+    # Guarda o custo SRMC antes de a pesquisa o sobrepor, e repoe-o antes
+    # de qualquer return. O custo escolhido pela calibracao e aplicado a
+    # rede pelo chamador.
     custo_fossil_srmc = n.generators.loc[
         n.generators.carrier == "fossil", "marginal_cost"
     ].iloc[0]
@@ -646,15 +589,9 @@ def calibrar_custo_fossil_bissecao(n, p_set_cargas_base, fossil_real):
             n, p_set_cargas_base, verbose=False
         )
         if not convergiu:
-            # Nao convergir aqui e tipicamente sintoma de o custo estar
-            # muito proximo do de outra tecnologia,
-            # despoletando saturacao de capacidade na redistribuicao do
-            # Slack. Trata-se como "custo baixo demais" (avanca custo_min
-            # para cima), o mesmo lado de onde esta instabilidade tende a
-            # surgir - critico para GARANTIR PROGRESSO: sem isto, o
-            # proximo ponto medio seria identico a este, e o ciclo ficaria
-            # preso a testar sempre o mesmo valor ate esgotar as
-            # tentativas, sem nunca avancar.
+            # A nao convergencia e tratada como custo baixo demais,
+            # avancando custo_min. Sem isto, o proximo ponto medio seria
+            # identico e o ciclo ficaria preso no mesmo valor.
             print(f"  Tentativa {tentativa}: custo={custo_teste:.2f} EUR/MWh "
                   f"-> nao convergiu, a tratar como custo baixo demais.")
             custo_min = custo_teste
@@ -864,16 +801,9 @@ else:
 # ===========================================================================
 # 6. VISUALIZACAO NATIVA DO PYPSA (CONGESTIONAMENTO + ESTATISTICAS)
 # ===========================================================================
-# METODOLOGIA: em vez de depender so do mapa
-# desenhado manualmente (Seccao 2, matplotlib puro), esta seccao usa
-# explicitamente as ferramentas de visualizacao INCLUIDAS no PyPSA -
-# n.plot() (mapa) e o modulo n.statistics (metricas/graficos) - que ja
-# sabem posicionar a rede a partir das coordenadas dos barramentos e
-# mapear resultados (carregamento, despacho) diretamente em
-# cores/espessuras, sem reimplementar essa logica a mao. Complementa, nao
-# substitui, o mapa da Seccao 2. Identica a Seccao 5 do topologia.py,
-# aqui aplicada ao despacho por OPF em vez do despacho real imposto -
-# permite comparar visualmente os dois metodos.
+# Esta seccao usa as ferramentas de visualizacao do PyPSA, n.plot() para
+# o mapa e n.statistics para as metricas, aplicadas ao despacho obtido
+# por otimizacao.
 #
 # A assinatura de n.plot() varia entre versoes do PyPSA. O try/except
 # abaixo garante que uma eventual incompatibilidade nao interrompe a
@@ -883,18 +813,11 @@ if CORRER_OPF and convergiu:
     print("VISUALIZACAO NATIVA DO PYPSA")
     print("=" * 60)
 
-    # -- 13.1 Mapa de congestionamento (n.plot) --------------------------
-    # Cor E espessura das linhas proporcionais ao carregamento (% de
-    # s_nom) - visualiza diretamente os pontos de congestionamento ja
-    # da rede. Os barramentos sao desenhados como GRAFICOS
-    # CIRCULARES (pie charts) com a reparticao da producao REAL por
-    # tecnologia nesse ponto (n.generators_t.p, nao o p_set imposto - ver
-    # nota metodologica da Seccao 4 do topologia.py sobre a diferenca
-    # entre os dois - nao confundir com a Seccao 5 deste ficheiro, que
-    # e sobre o OPF, um tema diferente),
-    # aproveitando que n.plot() interpreta automaticamente um bus_sizes
-    # com indice duplo (barramento, carrier) desta forma - funcionalidade
-    # nativa do PyPSA (ver User Guide, Maps (Static) > Input data), em
+    # -- 6.1 Mapa de congestionamento (n.plot) ---------------------------
+    # Cor e espessura das linhas proporcionais ao carregamento. Os
+    # barramentos sao desenhados como graficos circulares com a reparticao
+    # da producao por tecnologia, passando a n.plot() um bus_sizes com
+    # indice duplo (barramento, carrier), em
     # vez de continuarmos a desenhar todos os barramentos como pontos
     # pretos uniformes.
     try:
@@ -1041,7 +964,7 @@ if CORRER_OPF and convergiu:
               f"A assinatura de n.plot() varia entre versoes do PyPSA. "
               f"O resto do script nao e afetado.")
 
-    # -- 13.1.1 Mapa interativo (n.explore) -------------------------------
+    # -- 6.2 Mapa interativo (n.explore) ----------------------------------
     # Equivalente interativo do n.plot() (baseado em pydeck) - permite
     # passar o rato sobre cada barramento/linha e ver os seus dados
     # diretamente no navegador. Exportado como ficheiro HTML autonomo
@@ -1049,16 +972,9 @@ if CORRER_OPF and convergiu:
     # o navegador). Util para exploracao durante o desenvolvimento ou
     # complementando a figura estatica gerada na Seccao 6.
     #
-    # Dados extra no popup (tooltip): por omissao, o n.explore() so
-    # mostra a cor/espessura, sem o VALOR - por isso adiciona-se
-    # explicitamente o carregamento (%) como atributo real de cada
-    # linha, e a producao por tecnologia (MW) como atributo de cada
-    # barramento, via line_columns/bus_columns (funcionalidade nativa do
-    # PyPSA para isto - ver User Guide, Maps (Interactive)).
-    # NOTA: o n.explore() nao desenha graficos circulares (pie charts)
-    # dentro do popup como o n.plot() desenha no mapa - por isso a
-    # "fatia" de cada tecnologia aparece aqui como VALOR EM MW (texto),
-    # nao como um desenho, mesma informacao mas noutro formato.
+    # O carregamento e a producao por tecnologia sao adicionados como
+    # atributos das linhas e dos barramentos, via line_columns e
+    # bus_columns, para aparecerem no popup do mapa interativo.
     try:
         # Carregamento como atributo real da linha (para aparecer no popup)
         n.lines["carregamento_pct"] = carregamento_pct_mapa.round(1)
@@ -1092,7 +1008,7 @@ if CORRER_OPF and convergiu:
               f"(pip install pydeck / conda install -c conda-forge pydeck). "
               f"O mapa estatico (n.plot) nao e afetado por este erro.")
 
-    # -- 13.2 Estatisticas nativas (n.statistics) ------------------------
+    # -- 6.3 Estatisticas nativas (n.statistics) -------------------------
     try:
         print("\nBalanco energetico por tecnologia (n.statistics.energy_balance):")
         balanco_energetico = n.statistics.energy_balance()

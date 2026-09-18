@@ -1,23 +1,12 @@
 """
-rede_base.py - Construcao partilhada da rede RNT (PyPSA)
-==========================================================
-Modulo comum aos 3 scripts principais (topologia.py, topologia_OPF.py,
-contingencia_N1.py) - contem so a parte que e IGUAL nos tres: importar
-barramentos, linhas, transformadores, cargas e geracao (incluindo
-importacao e verificacoes de consistencia/conectividade).
+rede_base.py - Construcao da rede RNT em PyPSA
 
-Cada script principal chama construir_rede(timestamp_cenario) e recebe a
-rede ja pronta, evitando ter esta logica duplicada em 3 sitios - uma
-correcao feita aqui aplica-se automaticamente aos tres scripts.
+Modulo partilhado por topologia.py, topologia_OPF.py e
+contingencia_N1.py. Importa barramentos, linhas, transformadores,
+cargas e geracao, e devolve a rede pronta a simular.
 
-NAO inclui: desenho do mapa geografico (so usado no topologia.py) nem
-o bloco do atlite/ERA5 - usado nos dois scripts de simulacao
-(topologia.py e topologia_OPF.py), mas com papeis diferentes: no
-topologia.py so entra como limite de seguranca do redespacho
-heuristico (nunca do despacho inicial, que e sempre imposto a partir
-de valores reais); no topologia_OPF.py e um limite real da otimizacao
-(p_max_pu). Fica em cada script especifico, ja que nao e partilhado
-pelos tres.
+Nao inclui o desenho do mapa geografico nem o calculo dos fatores de
+capacidade renovavel, que ficam nos scripts que deles precisam.
 """
 
 import os
@@ -42,8 +31,7 @@ def construir_rede(timestamp_cenario):
     # ---------------------------------------------------------------------------
     # 1. Caminhos dos ficheiros
     # ---------------------------------------------------------------------------
-    # CAMINHO aponta sempre para a pasta onde este script esta guardado, seja
-    # qual for a pasta a partir de onde o comando e executado.
+    # Pasta onde este ficheiro esta guardado.
     CAMINHO = os.path.dirname(os.path.abspath(__file__)) + os.sep
 
     # Dados de entrada: os cinco .csv exportados do QGIS e o registo
@@ -60,29 +48,16 @@ def construir_rede(timestamp_cenario):
     # ---------------------------------------------------------------------------
     # 2. Selecao do cenario a simular
     # ---------------------------------------------------------------------------
-    # A carga de cada barramento e calculada em memoria, para qualquer
-    # instante de 2024 presente no registo da REN, a partir de:
-    #   p_%  e  q/p        -> colunas de CargaRNT.csv (calculadas no QGIS)
-    #   Consumo, Bombagem  -> lidos do registo da REN, no instante escolhido
-    #
-    #   total(t)          = Consumo(t) + Bombagem(t)
-    #   p_set(barramento) = p_%(barramento) * total(t)
-    #   q_set(barramento) = p_set(barramento) * (q/p)(barramento)
-    #
-    # Nao sao gerados ficheiros novos: tudo e calculado em memoria.
-    #
-    # A Importacao(t) e distribuida em partes iguais pelos geradores com
-    # Carrier == "import" (barramentos de fronteira), definidos em
-    # GeracaoRNT.csv com P_total = 0 - o script atribui-lhes o valor real
-    # do instante como injecao fixa, nao sujeita a otimizacao.
+    # A carga de cada barramento e calculada a partir das colunas p_% e q/p
+    # do CargaRNT.csv e dos valores de Consumo e Bombagem do instante:
+    #   p_set = p_% * (Consumo + Bombagem)
+    #   q_set = p_set * (q/p)
 
     TIMESTAMP_CENARIO = pd.Timestamp(timestamp_cenario)
-    # Etiqueta de identificacao usada apenas nos prints e nos nomes dos
-    # ficheiros de saida. A selecao do cenario e feita exclusivamente pela
-    # data/hora recebida como argumento.
+    # Etiqueta usada nos prints e nos nomes dos ficheiros de saida.
     CENARIO_ATIVO = TIMESTAMP_CENARIO.strftime('%Y-%m-%d_%H%M')
 
-    # Determina a estacao do ano automaticamente com base no mes (para o s_nom)
+    # Estacao do ano, que determina a coluna de s_nom a usar.
     mes = TIMESTAMP_CENARIO.month
     if mes in [12, 1, 2]:
         ESTACAO_ATIVA = "inv"       #inverno
@@ -149,7 +124,7 @@ def construir_rede(timestamp_cenario):
     # Determina a coluna de s_nom correta baseada na estacao do ano
     coluna_s_nom = f"s_nom_{ESTACAO_ATIVA}"
 
-    # Fallback: Se a coluna nao existir, tentar ler a padrao ou avisar o user
+    # Se a coluna sazonal nao existir, recorre a coluna generica.
     if coluna_s_nom not in linhas.columns:
         if ESTACAO_ATIVA in linhas.columns: # Caso a coluna se chame apenas "Inverno", "Verao"
             coluna_s_nom = ESTACAO_ATIVA
@@ -227,9 +202,7 @@ def construir_rede(timestamp_cenario):
         q_set=q_set_geradores,             # MVAr
     )
 
-    # Este modulo nao define custos marginais: apenas constroi a rede. Os
-    # custos marginais sao definidos em topologia_OPF.py, o unico script
-    # em que o despacho e decidido por otimizacao.
+    # Os custos marginais sao definidos em topologia_OPF.py.
 
     # ---------------------------------------------------------------------------
     # 9.1 Importacao - injecao fixa nos barramentos de fronteira
@@ -251,23 +224,9 @@ def construir_rede(timestamp_cenario):
     # ---------------------------------------------------------------------------
     # 9.2 Exportacao - carga fixa nos mesmos barramentos de fronteira
     # ---------------------------------------------------------------------------
-    # Confirmado (Excel completo, 35136 registos de 2024): Importacao e
-    # Exportacao NUNCA sao ambas > 0 no mesmo instante, e NUNCA sao ambas 0 -
-    # representam as duas metades de um unico fluxo liquido na fronteira,
-    # nao duas medicoes independentes. Por isso, este bloco pode ser
-    # adicionado sem qualquer logica especial de conflito com a Secao 6.1:
-    # em qualquer cenario, ou este bloco fica com valor 0 (import ativo), ou
-    # o bloco 6.1 fica com p_nom 0 (export ativo), nunca os dois em
-    # simultaneo. Implementada como Load, e nao como gerador negativo,
-    # porque representa fisicamente uma RETIRADA de energia da rede, tal
-    # como uma carga normal, apenas com destino em Espanha.
-    #
-    # NOTA: este Load e mantido deliberadamente FORA de p_set_cargas (o
-    # array devolvido a rede_base.py, usado pelos scripts principais para a
-    # compensacao iterativa de perdas). Reescalar a exportacao real,
-    # historica, na mesma proporcao que as perdas assumidas nao faria
-    # sentido fisico - os scripts que usam p_set_cargas devem ignorar este
-    # Load nesse mecanismo especifico, mantendo o seu p_set sempre fixo.
+    # A exportacao e adicionada como Load, distribuida em partes iguais
+    # pelos mesmos barramentos de fronteira. Fica fora de p_set_cargas,
+    # mantendo p_set fixo na compensacao iterativa de perdas.
     if len(importadores) == 0:
         print("\nAVISO: sem geradores de importacao identificados - a "
               "exportacao tambem nao sera injetada na rede.")
